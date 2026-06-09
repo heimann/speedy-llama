@@ -140,6 +140,23 @@ never become an upstream PR.
 - llama-cli quirk: -no-cnv still entered conversation mode and looped on
   "> " with EOF stdin; use -st for scripted single-turn runs.
 
+## Phase 5/6 results
+
+- Quants: Q4_K_M 18.6GB / Q5_K_M 21.7GB / Q6_K 25GB (~2.5 min each).
+- Q4_K_M fully offloaded on the 4090: 230 t/s gen, ~4000 t/s pp.
+- Turn termination: stops naturally on <|END_OF_TURN_TOKEN|> (eos
+  255001 is auto-EOG; <|END_OF_TURN_TOKEN|> is not in vocab.cpp's
+  name-match list, the eos id carries it).
+- Needle recall at ~14k tokens (needle at position 0, window 4096):
+  exact recall -> global NoPE layers + iSWA pattern verified at range.
+- Tool-use prompt: correctly structured JSON call.
+- Perplexity, 16x512 chunks of llama.cpp source: bf16 1.7880 +/- 0.047,
+  Q4_K_M 1.8109 +/- 0.048 (+1.3%) - normal Q4_K_M degradation.
+- At temp 1.0 the model sometimes re-enters analysis and emits literal
+  gpt-oss Harmony strings ("<|channel|>analysis<|message|>") - training
+  data leakage in the model itself, not a port bug (tokens are spelled
+  out as plain text; they don't exist in Cohere's vocab).
+
 ## Dead ends / incidents
 
 - First setup attempt crashed the machine: MCE hardware error on CPU 8
