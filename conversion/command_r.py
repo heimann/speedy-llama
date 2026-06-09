@@ -55,3 +55,85 @@ class Cohere2Model(TextModel):
             return
 
         yield from super().modify_tensors(data_torch, name, bid)
+
+
+@ModelBase.register("Cohere2MoeForCausalLM")
+class Cohere2MoeModel(TextModel):
+    model_arch = gguf.MODEL_ARCH.COHERE2MOE
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # intermediate_size is the expert FFN width; the leading dense layer
+        # has its own width which maps to the standard feed_forward_length
+        self.n_ff_exp = self.hparams["intermediate_size"]
+        self.hparams["intermediate_size"] = self.hparams["prefix_dense_intermediate_size"]
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        hparams = self.hparams
+
+        self.gguf_writer.add_logit_scale(hparams["logit_scale"])
+        self.gguf_writer.add_sliding_window(hparams["sliding_window"])
+        self.gguf_writer.add_vocab_size(hparams["vocab_size"])
+        self.gguf_writer.add_rope_dimension_count(hparams["head_dim"])
+        self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.NONE)
+
+        # interleaved SWA with full attention every 4th layer, full first
+        swa_period = 4
+        for il, lt in enumerate(hparams["layer_types"]):
+            if (lt == "full_attention") != (il % swa_period == 0):
+                raise ValueError(f"layer_types does not match a dense-first 1:{swa_period - 1} pattern")
+        self.gguf_writer.add_sliding_window_pattern(swa_period)
+
+        self.gguf_writer.add_expert_feed_forward_length(self.n_ff_exp)
+        self.gguf_writer.add_leading_dense_block_count(hparams["first_k_dense_replace"])
+        self.gguf_writer.add_expert_weights_norm(hparams["norm_topk_prob"])
+
+        if hparams["num_shared_experts"] != 0:
+            raise ValueError("shared experts are not supported")
+
+        expert_selection_fn = hparams["expert_selection_fn"]
+        if expert_selection_fn == "sigmoid":
+            self.gguf_writer.add_expert_gating_func(gguf.ExpertGatingFuncType.SIGMOID)
+        elif expert_selection_fn == "softmax":
+            self.gguf_writer.add_expert_gating_func(gguf.ExpertGatingFuncType.SOFTMAX)
+        else:
+            raise ValueError(f"Unsupported expert_selection_fn: {expert_selection_fn}")
+
+    _experts: list[dict[str, Tensor]] | None = None
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        # merge the per-expert tensors into a single 3d tensor
+        if name.find("mlp.experts") != -1:
+            n_experts = self.hparams["num_experts"]
+            assert bid is not None
+
+            if self._experts is None:
+                self._experts = [{} for _ in range(self.block_count)]
+
+            self._experts[bid][name] = data_torch
+
+            if len(self._experts[bid]) >= n_experts * 3:
+                for w_name in ["down_proj", "gate_proj", "up_proj"]:
+                    datas: list[Tensor] = []
+
+                    for xid in range(n_experts):
+                        ename = f"model.layers.{bid}.mlp.experts.{xid}.{w_name}.weight"
+                        datas.append(self._experts[bid][ename])
+                        del self._experts[bid][ename]
+
+                    data_torch = torch.stack(datas, dim=0)
+                    merged_name = f"model.layers.{bid}.mlp.experts.{w_name}.weight"
+                    yield from super().modify_tensors(data_torch, merged_name, bid)
+            return
+
+        yield from super().modify_tensors(data_torch, name, bid)
+
+    def prepare_tensors(self):
+        super().prepare_tensors()
+
+        if self._experts is not None:
+            experts = [k for d in self._experts for k in d.keys()]
+            if len(experts) > 0:
+                raise ValueError(f"Unprocessed experts: {experts}")
