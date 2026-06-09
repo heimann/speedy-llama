@@ -157,6 +157,71 @@ never become an upstream PR.
   data leakage in the model itself, not a port bug (tokens are spelled
   out as plain text; they don't exist in Cohere's vocab).
 
+## Phase 7 postmortem (vs PR #24260)
+
+### Converged exactly (independently identical decisions)
+
+- Arch string "cohere2moe", enum placement, registry entry in
+  conversion/__init__.py -> command_r module, class name Cohere2MoeModel,
+  file name src/models/cohere2-moe.cpp, even LLM_TYPE_30B_A3B for 49 layers.
+- Graph math is identical for this checkpoint: RMSNorm, parallel
+  attn+FFN block, rope iff (is_swa || il < n_layer_dense_lead) - their
+  force_rope is literally the same condition - sigmoid build_moe_ffn with
+  exp_probs_b=null, no top-k norm, logit_scale on output, tied embeddings.
+- Same expert stacking (buffer + torch.stack dim=0 + merged names), same
+  rope_dimension_count=head_dim, rope scaling NONE, NORM rope group.
+- Default gating to SIGMOID when key absent: same code.
+- Their C++ scalar-pattern fallback is set_swa_pattern(swa_period, true) -
+  same dense_first call; their loader would load our GGUF correctly.
+
+### What they did that we didn't
+
+1. **Per-layer SWA pattern array**: they write layer_types as a bool array
+   (add_sliding_window_pattern([...])) and read it via get_arr into
+   is_swa_impl, scalar+dense-first only as fallback. Faithful to arbitrary
+   patterns; needed a get_arr<std::array<uint32_t,512>> template
+   instantiation in llama-model-loader.cpp. We bake in strict 1:3
+   periodicity (validated at conversion, so safe but less general).
+2. **MTP/NextN support**: full multi-token-prediction path (graph_mtp,
+   trunk-only/mtp-only loading, converter filters). Our checkpoint's
+   config has no num_nextn_predict_layers, so we never saw this; either
+   another North variant has it or they ported it speculatively.
+3. **Shared experts**: supported, including the "average" combination
+   implemented as (routed + shared) * 0.5. We raise on
+   num_shared_experts != 0 (correct for this checkpoint, less general).
+4. **Fused gate_up experts + quant sidecar scales**: they plumb
+   ffn_gate_up_exps and all the *_s scale tensors through
+   build_ffn/build_moe_ffn (NVFP4-era infrastructure), and even patched
+   dense cohere2.cpp to pass _s tensors.
+5. **tests/test-llama-archs.cpp**: synthetic arch test registration
+   (with moe_mandatory). We didn't know this harness existed - the real
+   miss of the exercise; it's the project's standard for new archs.
+6. They read LLM_KV_ROPE_FREQ_BASE_SWA (optional) like cohere2 does; we
+   dropped that read. No-op for this model, faithful for hypothetical ones.
+
+### Where our version is arguably better
+
+- Tokenizer: we mapped North's chkhsh to the existing "tiny_aya" pre
+  (no C++ change). They bypass hashing with a hardcoded
+  get_vocab_base_pre -> "cohere2-moe" + new C++ vocab branch aliasing
+  TINY_AYA. Ours is less code; theirs is immune to tokenizer-file drift.
+- They hardcode add_expert_gating_func(SIGMOID) ignoring
+  expert_selection_fn; we map sigmoid/softmax and raise on unknown.
+  A softmax-routed cohere2_moe checkpoint would silently misroute
+  with their converter.
+- Their base.py change adds prefix_dense_intermediate_size to the global
+  find_hparam list for feed_forward_length (affects every arch); we
+  swapped hparams locally in our model class only.
+
+### Verdict
+
+Blind implementation was functionally correct and byte-level compatible
+with their loader for this checkpoint (their fallback path). We missed
+generality (pattern array, shexp, MTP) and the arch test harness, not
+correctness. Possible upstream-worthy observations (David's call, in his
+own words per repo policy): the hardcoded SIGMOID vs expert_selection_fn,
+and the global find_hparam edit.
+
 ## Dead ends / incidents
 
 - First setup attempt crashed the machine: MCE hardware error on CPU 8
