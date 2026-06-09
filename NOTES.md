@@ -105,8 +105,50 @@ never become an upstream PR.
 - rope_dimension_count = head_dim = 128 (no rotary_pct / partial factor in
   config; transformers default = full head_dim).
 
+## Phase 2/3 decisions
+
+- Arch string: "cohere2moe" (style of "glm4moe").
+- Tokenizer: pre-tokenizer hash was unknown, but the tokenizer.json regexes
+  match LLAMA_VOCAB_PRE_TYPE_TINY_AYA exactly (digit thousands-grouping
+  split + case-aware word split) - North shares Cohere's new tokenizer
+  family. Added North's chkhsh mapping to res="tiny_aya" in base.py.
+- Model's tokenizer_config.json declares tokenizer_class
+  "TokenizersBackend" (transformers v5 only; llama.cpp pins 4.57.6).
+  Workaround: ~/code/north-mini-src/ is a symlink dir over the HF snapshot
+  with tokenizer_config.json patched to PreTrainedTokenizerFast.
+- RoPE type: HF modeling uses interleaved/GPT-J rotate_half ("different
+  from e.g. Llama" comment) -> LLAMA_ROPE_TYPE_NORM group (same as
+  cohere2), no q/k permutation in converter.
+- Converter swaps intermediate_size (768, experts) out for
+  prefix_dense_intermediate_size (3072) so feed_forward_length carries the
+  dense width and expert_feed_forward_length carries the expert width.
+- build_moe_ffn: exp_probs_b=nullptr, norm_w=false, w_scale=0.0 (default
+  hparams.expert_weights_scale; 0 means "no scaling" in build_moe_ffn).
+- bf16 GGUF verified: 442 tensors, experts fused to [2048,768,128] (ggml
+  dim order), gating_func=2 (sigmoid), all metadata keys correct.
+- llama-model-saver.cpp blacklists COHERE2; added COHERE2_MOE alongside.
+
+## Phase 4 result
+
+- bf16 GGUF coherent on FIRST RUN, no debugging needed. CPU (-ngl 0),
+  greedy: correct iterative + recursive linked-list reversal with clean
+  markdown and docstrings. Prompt 33.3 t/s, generation 8.2 t/s.
+- Model emits visible "We need to..." planning prose before the answer -
+  North is thinking-trained (<|START_THINKING|> tokens in the template).
+  Worth checking later whether llama.cpp's reasoning parser should split
+  this into a separate channel; cosmetic, not architectural.
+- llama-cli quirk: -no-cnv still entered conversation mode and looped on
+  "> " with EOF stdin; use -st for scripted single-turn runs.
+
 ## Dead ends / incidents
 
 - First setup attempt crashed the machine: MCE hardware error on CPU 8
   (13900K) during -j30 CUDA build. Rebuilt with -j12, completed fine.
   Throttle all heavy parallel work on voyager.
+- The crash also silently truncated 2 safetensors shards and emptied
+  model.safetensors.index.json even though `hf download` exited 0. Caught
+  by checking every file size against hub metadata. Lesson: after a hard
+  crash, size-verify the whole HF cache, don't trust the CLI.
+- Incremental build after the 2228-commit master jump left
+  libggml-cuda.so missing new flash-attn template instances (stale
+  configure state). Required rm -rf build + clean rebuild.
