@@ -161,8 +161,19 @@ struct cli_context {
             task.cli_files  = input_files;        // copy
             task.cli        = true;
 
+            const llama_vocab * vocab = llama_model_get_vocab(
+                llama_get_model(ctx_server.get_llama_context()));
+
             // chat template settings
             task.params.chat_parser_params = common_chat_parser_params(chat_params);
+            // render control tokens the parser matches on (same as the
+            // /chat/completions path in server-task.cpp)
+            for (const auto & t : chat_params.preserved_tokens) {
+                const auto ids = common_tokenize(vocab, t, false, true);
+                if (ids.size() == 1) {
+                    task.params.sampling.preserved_tokens.insert(ids[0]);
+                }
+            }
             // streaming deltas need DEEPSEEK-style extraction; honor --reasoning-format none
             task.params.chat_parser_params.reasoning_format =
                 reasoning_format == COMMON_REASONING_FORMAT_NONE
@@ -175,9 +186,6 @@ struct cli_context {
 
             // reasoning budget sampler
             if (!chat_params.thinking_end_tag.empty()) {
-                const llama_vocab * vocab = llama_model_get_vocab(
-                    llama_get_model(ctx_server.get_llama_context()));
-
                 task.params.sampling.reasoning_budget_tokens = defaults.sampling.reasoning_budget_tokens;
                 task.params.sampling.generation_prompt = chat_params.generation_prompt;
 
