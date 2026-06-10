@@ -19,7 +19,7 @@ Priorities in order: compatibility, then speed, then ergonomics.
 
 ## Later
 
-- **MTP self-speculation** - models shipping multi-token-prediction heads (North MTP variant, Qwen3-Next-class) can speculate against their own MTP head: speculative decoding with no draft model. Frontier llama.cpp work; this is where the fork earns its name.
+- **MTP self-speculation** - upstream merged MTP speculative decoding in May 2026 (PR #22673, `--spec-type draft-mtp`; Qwen3.6 GGUFs ship MTP heads, ~1.5-2x claimed). The work here is now: tuned MTP presets + honest 4090/3090 benchmarks for supported models, and wiring the North MTP variant (cohere2_moe NextN graph, per PR #24260) into the merged machinery - a combination only this fork can run.
 - **Daemon** (separate repo, BEAM/OTP): Ollama ergonomics on llama.cpp performance.
   - idle unload after TTL
   - hot model swap on the request's `model` field (queue requests during swaps)
