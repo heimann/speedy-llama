@@ -106,6 +106,29 @@ struct cli_context {
     std::vector<raw_buffer> input_files;
     task_params defaults;
     bool verbose_prompt;
+    common_reasoning_format reasoning_format;
+    bool in_special_marker = false;
+
+    // with --reasoning-format none the raw stream includes control-token
+    // text like <|START_THINKING|>; hide those markers from display
+    std::string strip_special_markers(const std::string & s) {
+        std::string out;
+        for (size_t i = 0; i < s.size(); ++i) {
+            if (in_special_marker) {
+                if (s[i] == '>' && i > 0 && s[i - 1] == '|') {
+                    in_special_marker = false;
+                }
+                continue;
+            }
+            if (s[i] == '<' && i + 1 < s.size() && s[i + 1] == '|') {
+                in_special_marker = true;
+                ++i;
+                continue;
+            }
+            out += s[i];
+        }
+        return out;
+    }
 
     // thread for showing "loading" animation
     std::atomic<bool> loading_show;
@@ -121,7 +144,8 @@ struct cli_context {
         defaults.timings_per_token = true; // in order to get timings even when we cancel mid-way
         // defaults.return_progress = true; // TODO: show progress
 
-        verbose_prompt = params.verbose_prompt;
+        verbose_prompt   = params.verbose_prompt;
+        reasoning_format = params.reasoning_format;
     }
 
     std::string generate_completion(result_timings & out_timings) {
@@ -139,8 +163,13 @@ struct cli_context {
 
             // chat template settings
             task.params.chat_parser_params = common_chat_parser_params(chat_params);
-            task.params.chat_parser_params.reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
-            if (!chat_params.parser.empty()) {
+            // streaming deltas need DEEPSEEK-style extraction; honor --reasoning-format none
+            task.params.chat_parser_params.reasoning_format =
+                reasoning_format == COMMON_REASONING_FORMAT_NONE
+                    ? COMMON_REASONING_FORMAT_NONE
+                    : COMMON_REASONING_FORMAT_DEEPSEEK;
+            if (!chat_params.parser.empty() &&
+                    task.params.chat_parser_params.reasoning_format != COMMON_REASONING_FORMAT_NONE) {
                 task.params.chat_parser_params.parser.load(chat_params.parser);
             }
 
@@ -214,7 +243,11 @@ struct cli_context {
                             is_thinking = false;
                         }
                         curr_content += diff.content_delta;
-                        console::log("%s", diff.content_delta.c_str());
+                        if (reasoning_format == COMMON_REASONING_FORMAT_NONE) {
+                            console::log("%s", strip_special_markers(diff.content_delta).c_str());
+                        } else {
+                            console::log("%s", diff.content_delta.c_str());
+                        }
                         console::flush();
                     }
                     if (!diff.reasoning_content_delta.empty()) {
