@@ -199,6 +199,22 @@ never become an upstream PR.
 6. They read LLM_KV_ROPE_FREQ_BASE_SWA (optional) like cohere2 does; we
    dropped that read. No-op for this model, faithful for hypothetical ones.
 
+### Post-postmortem correction (learned the hard way)
+
+Their `_set_vocab_gpt2` override - which I originally filed under "unclear
+why" - fixes a real bug we shipped: tokenizer_config.json carries LEGACY
+chat templates (R7B-era, using <|START_RESPONSE|> markers that don't exist
+in North's vocab), while chat_template.jinja is the trained format (thinking
+scaffolded by real <|START_THINKING|> tokens). Our GGUF embedded the legacy
+template; the model ran off-distribution: thinking dumped as plain text,
+gpt-oss-style "<|channel|>analysis" loops on conversational prompts,
+occasional failure to terminate. Symptom did not show on single-shot code
+prompts (all our smoke tests) - only in multi-turn chat. Fixed by adopting
+their override + patching shipped GGUFs via gguf_new_metadata.py. With the
+correct template, llama-cli parses thinking into a proper reasoning channel
+(rendered dim) and the loops disappear. Lesson: smoke tests must include
+multi-turn conversational prompts, not just one-shot tasks.
+
 ### Where our version is arguably better
 
 - Tokenizer: we mapped North's chkhsh to the existing "tiny_aya" pre

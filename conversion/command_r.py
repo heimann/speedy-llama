@@ -61,6 +61,23 @@ class Cohere2Model(TextModel):
 class Cohere2MoeModel(TextModel):
     model_arch = gguf.MODEL_ARCH.COHERE2MOE
 
+    def _set_vocab_gpt2(self) -> None:
+        tokens, toktypes, tokpre = self.get_vocab_base()
+        self.gguf_writer.add_tokenizer_model("gpt2")
+        self.gguf_writer.add_tokenizer_pre(tokpre)
+        self.gguf_writer.add_token_list(tokens)
+        self.gguf_writer.add_token_types(toktypes)
+
+        special_vocab = gguf.SpecialVocab(self.dir_model, load_merges=True)
+        # tokenizer_config.json carries legacy templates that reference
+        # <|START_RESPONSE|> etc. which do not exist in this vocab;
+        # chat_template.jinja is the one the model was trained with
+        chat_template_jinja = self.dir_model / "chat_template.jinja"
+        if chat_template_jinja.is_file():
+            with open(chat_template_jinja, "r", encoding="utf-8") as f:
+                special_vocab.chat_template = f.read()
+        special_vocab.add_to_gguf(self.gguf_writer)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
