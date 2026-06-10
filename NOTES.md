@@ -238,6 +238,21 @@ correctness. Possible upstream-worthy observations (David's call, in his
 own words per repo policy): the hardcoded SIGMOID vs expert_selection_fn,
 and the global find_hparam edit.
 
+## Upstream-worthy findings (report in David's own words, per repo policy)
+
+1. Their converter hardcodes SIGMOID gating, ignoring expert_selection_fn -
+   a softmax-routed cohere2_moe checkpoint would silently misroute (PR
+   #24260 review note).
+2. llama-cli never copies chat_params.preserved_tokens into
+   sampling.preserved_tokens (the /chat/completions path does, in
+   server-task.cpp). Any template whose parser tags are control tokens
+   (Cohere <|START_THINKING|>/<|END_THINKING|>, etc.) streams everything as
+   reasoning in the CLI: thinking never "ends", answer renders dim with no
+   newline. Fixed in this fork (tools/cli/cli.cpp).
+3. llama-cli also force-overrides --reasoning-format to DEEPSEEK, and the
+   PEG parser hard-crashes (std::runtime_error -> terminate) on truncated
+   or grammar-mismatched output instead of degrading gracefully.
+
 ## Dead ends / incidents
 
 - First setup attempt crashed the machine: MCE hardware error on CPU 8
