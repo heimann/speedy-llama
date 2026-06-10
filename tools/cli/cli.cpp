@@ -14,8 +14,12 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 #include <thread>
 #include <signal.h>
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -25,15 +29,58 @@
 #include <windows.h>
 #endif
 
-const char * LLAMA_ASCII_LOGO = R"(
-▄▄ ▄▄
-██ ██
-██ ██  ▀▀█▄ ███▄███▄  ▀▀█▄    ▄████ ████▄ ████▄
-██ ██ ▄█▀██ ██ ██ ██ ▄█▀██    ██    ██ ██ ██ ██
-██ ██ ▀█▄██ ██ ██ ██ ▀█▄██ ██ ▀████ ████▀ ████▀
-                                    ██    ██
-                                    ▀▀    ▀▀
-)";
+// speedy-llama: a llama in a hurry
+static const std::vector<std::string> SPEEDY_LLAMA_ART = {
+    "             ▄▄      ",
+    "         ▄▄ █▀ █▄    ",
+    "    ▄▄▄▄▄▄▄▄█  ▄▀    ",
+    " ▄██████████████     ",
+    " ██▀ ▀██▀▀▀▀▀██▀     ",
+    " ▀▀   ▀▀     ▀▀      ",
+};
+
+static const char * SPEEDY_LLAMA_WORDMARK = "s p e e d y - l l a m a";
+
+static void print_speedy_banner() {
+#if !defined(_WIN32)
+    const bool animate = isatty(STDOUT_FILENO);
+    const int n_lines = (int) SPEEDY_LLAMA_ART.size();
+    if (animate) {
+        const int n_frames = 9;
+        const int step     = 5;
+        // reserve space, then redraw the llama at increasing offsets
+        for (int i = 0; i < n_lines; ++i) {
+            fputs("\n", stdout);
+        }
+        for (int f = 0; f < n_frames; ++f) {
+            const int indent = f * step;
+            fprintf(stdout, "\033[%dA", n_lines);
+            for (int i = 0; i < n_lines; ++i) {
+                std::string trail;
+                // speed streaks trail the body, longest mid-height
+                if (i >= 2 && i <= 4 && indent > 0) {
+                    const int len = std::min(indent - 1, 10 - 2 * std::abs(3 - i));
+                    for (int k = 0; k < len; ++k) {
+                        trail += "≡"; // ≡
+                    }
+                }
+                const int pad = std::max(0, indent - (int) (trail.size() / 3));
+                fprintf(stdout, "\033[2K%*s%s%s\n", pad, "", trail.c_str(), SPEEDY_LLAMA_ART[i].c_str());
+            }
+            fflush(stdout);
+            std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        }
+        fprintf(stdout, "%*s%s\n", (n_frames - 1) * step + 1, "", SPEEDY_LLAMA_WORDMARK);
+        fflush(stdout);
+        return;
+    }
+#endif
+    for (const auto & line : SPEEDY_LLAMA_ART) {
+        fprintf(stdout, "%s\n", line.c_str());
+    }
+    fprintf(stdout, " %s\n", SPEEDY_LLAMA_WORDMARK);
+    fflush(stdout);
+}
 
 static std::atomic<bool> g_is_interrupted = false;
 static bool should_stop() {
@@ -438,7 +485,7 @@ int llama_cli(int argc, char ** argv) {
     add_system_prompt();
 
     console::log("\n");
-    console::log("%s\n", LLAMA_ASCII_LOGO);
+    print_speedy_banner();
     console::log("build      : %s\n", inf.build_info.c_str());
     console::log("model      : %s\n", inf.model_name.c_str());
     console::log("modalities : %s\n", modalities.c_str());
