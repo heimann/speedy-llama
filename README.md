@@ -1,3 +1,13 @@
+```
+                          ▄▄
+                      ▄▄ █▀ █▄
+   ≡≡≡≡≡≡≡≡      ▄▄▄▄▄▄▄▄█  ▄▀
+    ≡≡≡≡≡≡≡≡≡ ▄██████████████
+     ≡≡≡≡≡≡≡  ██▀ ▀██▀▀▀▀▀██▀
+              ▀▀   ▀▀     ▀▀
+              s p e e d y - l l a m a
+```
+
 # Speedy Llama
 
 Experimental [llama.cpp](https://github.com/ggml-org/llama.cpp) fork carrying model architectures that haven't merged upstream yet.
