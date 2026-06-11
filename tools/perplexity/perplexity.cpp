@@ -472,7 +472,9 @@ static results_perplexity perplexity(llama_context * ctx, const common_params & 
     auto tim1 = std::chrono::high_resolution_clock::now();
     LOG_INF("%s: tokenizing the input ..\n", __func__);
 
-    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true);
+    // diagnostic: PPL_PARSE_SPECIAL=1 parses special/control tokens in the input text
+    const bool parse_special = getenv("PPL_PARSE_SPECIAL") != nullptr;
+    std::vector<llama_token> tokens = common_tokenize(ctx, params.prompt, true, parse_special);
 
     auto tim2 = std::chrono::high_resolution_clock::now();
     LOG_INF("%s: tokenization took %g ms\n",__func__,1e-3*std::chrono::duration_cast<std::chrono::microseconds>(tim2-tim1).count());
