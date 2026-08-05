@@ -1,0 +1,4 @@
+# The README is a deliberate fork rebrand, so upstream's version is never
+# wanted. Without this, every upstream README edit conflicts the daily sync.
+# Requires: git config merge.ours.driver true (set by bin/speedy-sync.sh).
+README.md merge=ours
